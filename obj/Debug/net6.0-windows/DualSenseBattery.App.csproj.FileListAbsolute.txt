@@ -1,0 +1,5 @@
+C:\Users\olafz\dualsens\DualSenseBattery.App\obj\Debug\net6.0-windows\DualSenseBattery.App.csproj.AssemblyReference.cache
+C:\Users\olafz\dualsens\DualSenseBattery.App\obj\Debug\net6.0-windows\DualSenseBattery.App.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\olafz\dualsens\DualSenseBattery.App\obj\Debug\net6.0-windows\DualSenseBattery.App.AssemblyInfoInputs.cache
+C:\Users\olafz\dualsens\DualSenseBattery.App\obj\Debug\net6.0-windows\DualSenseBattery.App.AssemblyInfo.cs
+C:\Users\olafz\dualsens\DualSenseBattery.App\obj\Debug\net6.0-windows\DualSenseBattery.App.csproj.CoreCompileInputs.cache

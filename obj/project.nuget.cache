@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "TZXzx7xhJxdFL8ThxfTkawMVDadBkNH1cgJ4EoDzGfRsWRUnZ7NAPwFet4zF2SRoi9arSUyzs5tkZqyKb7YTZw==",
+  "success": true,
+  "projectFilePath": "C:\\Users\\olafz\\dualsens\\DualSenseBattery.App\\DualSenseBattery.App.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\olafz\\.nuget\\packages\\hidlibrary\\3.3.40\\hidlibrary.3.3.40.nupkg.sha512",
+    "C:\\Users\\olafz\\.nuget\\packages\\microsoft.windows.sdk.net.ref\\10.0.22621.56\\microsoft.windows.sdk.net.ref.10.0.22621.56.nupkg.sha512"
+  ],
+  "logs": []
+}
