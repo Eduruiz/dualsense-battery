@@ -1,0 +1,28 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish
+        run: dotnet publish DualSenseBattery.App.csproj -c Release -o publish
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: publish/DualSenseBattery.App.exe
+          generate_release_notes: true
