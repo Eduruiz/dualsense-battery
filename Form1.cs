@@ -38,6 +38,41 @@ public partial class Form1 : Form
         File.AppendAllText(logFile, $"{DateTime.Now:HH:mm:ss.fff} - {message}\n");
     }
 
+    private void ShowToast(string title, string message, bool silent = false, string scenario = "")
+    {
+        string audioXml = silent ? "<audio silent=\"true\"/>" : "";
+        string scenarioAttr = scenario.Length > 0 ? $" scenario=\"{scenario}\"" : "";
+        string xml = $"""
+            <toast{scenarioAttr}>
+              <visual>
+                <binding template="ToastGeneric">
+                  <text>{System.Security.SecurityElement.Escape(title)}</text>
+                  <text>{System.Security.SecurityElement.Escape(message)}</text>
+                </binding>
+              </visual>
+              {audioXml}
+            </toast>
+            """;
+
+        try
+        {
+            var doc = new Windows.Data.Xml.Dom.XmlDocument();
+            doc.LoadXml(xml);
+
+            var toast = new Windows.UI.Notifications.ToastNotification(doc);
+            toast.ExpirationTime = DateTimeOffset.Now.AddSeconds(5);
+
+            var notifier = Windows.UI.Notifications.ToastNotificationManager.CreateToastNotifier(Program.APP_ID);
+            notifier.Show(toast);
+
+            Task.Delay(5000).ContinueWith(_ => notifier.Hide(toast));
+        }
+        catch (Exception ex)
+        {
+            Log($"ShowToast failed: {ex.Message}");
+        }
+    }
+
 
     [StructLayout(LayoutKind.Sequential)]
     private struct DEV_BROADCAST_DEVICEINTERFACE
@@ -196,7 +231,7 @@ public partial class Form1 : Form
                 }
 
                 if (lblStatus != null) lblStatus.Text = "Status: Connected";
-                notifyIcon.ShowBalloonTip(3000, "Controller Connected", $"DualSense controller has been detected.{batteryInfo}", ToolTipIcon.Info);
+                ShowToast("Controller Connected", $"DualSense controller has been detected.{batteryInfo}", silent: true);
                 Log("CheckControllerConnection: CONNECT notification shown");
             }
         }
@@ -207,7 +242,7 @@ public partial class Form1 : Form
             
             _controllerWasConnected = false;
             UpdateUIForDisconnect();
-            notifyIcon.ShowBalloonTip(3000, "Controller Disconnected", "The DualSense controller has been disconnected.", ToolTipIcon.Warning);
+            ShowToast("Controller Disconnected", "The DualSense controller has been disconnected.", silent: true);
             Log("CheckControllerConnection: DISCONNECT notification shown");
         }
         else
@@ -264,7 +299,7 @@ public partial class Form1 : Form
         showToolStripMenuItem = new ToolStripMenuItem("Show");
         showToolStripMenuItem.Click += ShowToolStripMenuItem_Click;
         contextMenuStrip.Items.Insert(0, showToolStripMenuItem);
-        
+
         // Force re-associate context menu to notify icon
         notifyIcon.ContextMenuStrip = contextMenuStrip;
         
@@ -343,7 +378,7 @@ public partial class Form1 : Form
                 }
                 
                 if (lblStatus != null) lblStatus.Text = "Status: Connected";
-                notifyIcon.ShowBalloonTip(3000, "Controller Connected", $"DualSense controller is connected.{batteryInfo}", ToolTipIcon.Info);
+                ShowToast("Controller Connected", $"DualSense controller is connected.{batteryInfo}", silent: true);
                 Log("Form1_Load: Controller connected on startup, notification shown");
             }
             else
@@ -477,7 +512,7 @@ public partial class Form1 : Form
 
         if (batteryLevel <= 20 && !isCharging && !_lowBatteryAlertSent)
         {
-            notifyIcon.ShowBalloonTip(3000, "DualSense Low Battery", $"Your DualSense controller battery is at {batteryLevel}%!", ToolTipIcon.Warning);
+            ShowToast("DualSense Low Battery", $"Your DualSense controller battery is at {batteryLevel}%!", scenario: "reminder");
             _lowBatteryAlertSent = true;
         }
         else if (batteryLevel > 20 || isCharging)
@@ -487,7 +522,7 @@ public partial class Form1 : Form
 
         if (batteryLevel <= 5 && !isCharging && !_criticalBatteryAlertSent)
         {
-            notifyIcon.ShowBalloonTip(3000, "DualSense Critical Battery", $"Your DualSense controller battery is CRITICALLY LOW at {batteryLevel}%!", ToolTipIcon.Error);
+            ShowToast("DualSense Critical Battery", $"Your DualSense controller battery is critically low at {batteryLevel}%!", scenario: "urgent");
             _criticalBatteryAlertSent = true;
         }
         else if (batteryLevel > 5 || isCharging)
