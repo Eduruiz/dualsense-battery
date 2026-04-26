@@ -1,8 +1,5 @@
-using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using HidLibrary;
-using System.Linq;
-using System.Threading;
 
 namespace DualSenseBattery.App;
 
@@ -32,18 +29,8 @@ public partial class Form1 : Form
     private Label? lblBattery;
     private ProgressBar? pbBattery;
     
-    private int _failedReadCount = 0;
-    private const int MAX_FAILED_READS = 3;
-    
-    // For stale data detection - track timestamp from reports
-    private uint _lastTimestamp = 0;
-    private int _staleReadCount = 0;
-    private const int MAX_STALE_READS = 3; // 3 identical timestamps = disconnected
-    
-    // For notification debouncing
-    private DateTime _lastConnectNotification = DateTime.MinValue;
-    private DateTime _lastDisconnectNotification = DateTime.MinValue;
-    private const int NOTIFICATION_DEBOUNCE_MS = 3000; // Don't show same notification within 3 seconds
+    // Track the current tray icon handle so we can destroy the old one when updating
+    private IntPtr _trayIconHandle = IntPtr.Zero;
 
     private void Log(string message)
     {
@@ -86,6 +73,13 @@ public partial class Form1 : Form
 
     private void RegisterDeviceChangeNotification()
     {
+        // Unregister any previous registration (handles can be recreated on WindowState changes)
+        if (_deviceNotificationHandle != IntPtr.Zero)
+        {
+            UnregisterDeviceNotification(_deviceNotificationHandle);
+            _deviceNotificationHandle = IntPtr.Zero;
+        }
+
         DEV_BROADCAST_DEVICEINTERFACE dbi = new DEV_BROADCAST_DEVICEINTERFACE
         {
             dbcc_size = Marshal.SizeOf(typeof(DEV_BROADCAST_DEVICEINTERFACE)),
@@ -100,11 +94,11 @@ public partial class Form1 : Form
 
         const int DEVICE_NOTIFY_WINDOW_HANDLE = 0x00000000;
         const int DEVICE_NOTIFY_ALL_INTERFACE_CLASSES = 0x00000004;
-        
+
         _deviceNotificationHandle = RegisterDeviceNotification(this.Handle, buffer, DEVICE_NOTIFY_WINDOW_HANDLE | DEVICE_NOTIFY_ALL_INTERFACE_CLASSES);
 
         Marshal.FreeHGlobal(buffer);
-        
+
         Log($"RegisterDeviceChangeNotification: Handle = {_deviceNotificationHandle}, Window Handle = {this.Handle}");
     }
 
@@ -175,31 +169,32 @@ public partial class Form1 : Form
         {
             // Controller connected - try to connect and show notification
             Log("CheckControllerConnection: Controller CONNECTED");
-            
+
             if (TryConnectController())
             {
                 _controllerWasConnected = true;
-                
-                // Read battery info for the notification
+
+                // Read battery info for the notification and update UI
                 string batteryInfo = "";
                 if (_controller != null)
                 {
                     var report = _controller.ReadReport(1000);
                     if (report.ReadStatus == HidDeviceData.ReadStatus.Success && report.Data.Length > 0)
                     {
-                        _isBluetooth = report.ReportId == 0x31;
+                        _isBluetooth = report.Data.Length == 77; // BT extended report = 77 data bytes; USB = 63
                         int battIdx = _isBluetooth ? 53 : 52;
-                        
+
                         if (report.Data.Length > battIdx)
                         {
                             int battery = report.Data[battIdx];
                             int batteryLevel = (battery & 0x0F) * 10;
                             bool isCharging = (battery & 0x10) != 0;
                             batteryInfo = $" Battery: {batteryLevel}%" + (isCharging ? " (Charging)" : "");
+                            UpdateBatteryLevel(batteryLevel, isCharging);
                         }
                     }
                 }
-                
+
                 if (lblStatus != null) lblStatus.Text = "Status: Connected";
                 notifyIcon.ShowBalloonTip(3000, "Controller Connected", $"DualSense controller has been detected.{batteryInfo}", ToolTipIcon.Info);
                 Log("CheckControllerConnection: CONNECT notification shown");
@@ -265,12 +260,18 @@ public partial class Form1 : Form
         };
         gbControllerInfo.Controls.Add(pbBattery);
         
-        // Tray Icon Menu
+        // Tray Icon Menu - Insert Show at the beginning
         showToolStripMenuItem = new ToolStripMenuItem("Show");
         showToolStripMenuItem.Click += ShowToolStripMenuItem_Click;
         contextMenuStrip.Items.Insert(0, showToolStripMenuItem);
-
+        
+        // Force re-associate context menu to notify icon
+        notifyIcon.ContextMenuStrip = contextMenuStrip;
+        
+        // Setup double-click handler
         notifyIcon.DoubleClick += NotifyIcon_DoubleClick;
+
+        notifyIcon.Text = "DualSense Battery - Searching...";
     }
 
     private void NotifyIcon_DoubleClick(object? sender, EventArgs e)
@@ -294,17 +295,21 @@ public partial class Form1 : Form
     private void Form1_Load(object sender, EventArgs e)
     {
         Log("=== APP STARTED ===");
+        
         this.WindowState = FormWindowState.Minimized;
         this.ShowInTaskbar = false;
-        notifyIcon.Icon = SystemIcons.Application;
-        notifyIcon.Text = "Searching for controller...";
-        notifyIcon.Visible = true;
         
         Log("Form1_Load: Starting timer");
         timer.Start();
+    }
+    
+    private void Form1_Shown(object sender, EventArgs e)
+    {
+        Log("Form1_Shown: Hiding form");
+        this.Hide();
         
         // Check if controller is already connected on startup
-        Log("Form1_Load: Checking for already-connected controller");
+        Log("Form1_Shown: Checking for already-connected controller");
         var devices = HidDevices.Enumerate(VENDOR_ID, PRODUCT_ID).ToList();
         
         if (devices.Any())
@@ -321,7 +326,7 @@ public partial class Form1 : Form
                     var report = _controller.ReadReport(1000);
                     if (report.ReadStatus == HidDeviceData.ReadStatus.Success && report.Data.Length > 0)
                     {
-                        _isBluetooth = report.ReportId == 0x31;
+                        _isBluetooth = report.Data.Length == 77; // BT extended report = 77 data bytes; USB = 63
                         int battIdx = _isBluetooth ? 53 : 52;
                         
                         if (report.Data.Length > battIdx)
@@ -350,8 +355,6 @@ public partial class Form1 : Form
         {
             Log("Form1_Load: No controller detected on startup");
         }
-        
-        this.Hide();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -375,11 +378,17 @@ public partial class Form1 : Form
         if (_deviceNotificationHandle != IntPtr.Zero)
         {
             UnregisterDeviceNotification(_deviceNotificationHandle);
+            _deviceNotificationHandle = IntPtr.Zero;
         }
         notifyIcon.Visible = false;
         _controller?.CloseDevice();
         timer?.Stop();
         timer?.Dispose();
+        if (_trayIconHandle != IntPtr.Zero)
+        {
+            DestroyIcon(_trayIconHandle);
+            _trayIconHandle = IntPtr.Zero;
+        }
     }
 
     private bool TryConnectController()
@@ -412,9 +421,6 @@ public partial class Form1 : Form
                         // This is a real, responding controller!
                         Log("TryConnectController: Found working controller!");
                         _controller = device;
-                        _failedReadCount = 0;
-                        _staleReadCount = 0;
-                        _lastTimestamp = 0;
                         Log("TryConnectController: SUCCESS - returning true");
                         return true;
                     }
@@ -439,70 +445,55 @@ public partial class Form1 : Form
 
     private void timer_Tick(object sender, EventArgs e)
     {
-        Log("=== timer_Tick START ===");
-        
-        // Timer ONLY reads battery status from a connected controller
-        // It does NOT handle connect/disconnect detection - that's done by Windows events
-        if (_controller != null && _controllerWasConnected)
+        if (_controller == null || !_controllerWasConnected)
+            return;
+
+        HidReport report = _controller.ReadReport(1000);
+
+        if (report.ReadStatus != HidDeviceData.ReadStatus.Success || report.Data.Length == 0)
         {
-            Log("timer_Tick: Reading battery status");
-            HidReport report = _controller.ReadReport(1000);
-            
-            Log($"timer_Tick: Read status={report.ReadStatus}, DataLength={report.Data.Length}");
-            
-            if (report.ReadStatus == HidDeviceData.ReadStatus.Success && report.Data.Length > 0)
-            {
-                // Successfully read battery data
-                _isBluetooth = report.ReportId == 0x31;
-                int battIdx = _isBluetooth ? 53 : 52;
-
-                Log($"timer_Tick: _isBluetooth={_isBluetooth}, battIdx={battIdx}, report.Data.Length={report.Data.Length}");
-                
-                if (report.Data.Length > battIdx)
-                {
-                    int battery = report.Data[battIdx];
-                    int batteryLevel = (battery & 0x0F) * 10;
-                    bool isCharging = (battery & 0x10) != 0;
-
-                    Log($"timer_Tick: Battery={batteryLevel}%, Charging={isCharging}");
-                    
-                    UpdateBatteryLevel(batteryLevel, isCharging);
-
-                    // Low battery alert (20%)
-                    if (batteryLevel <= 20 && !isCharging && !_lowBatteryAlertSent)
-                    {
-                        notifyIcon.ShowBalloonTip(3000, "DualSense Low Battery", $"Your DualSense controller battery is at {batteryLevel}%!", ToolTipIcon.Warning);
-                        _lowBatteryAlertSent = true;
-                    }
-                    else if (batteryLevel > 20 || isCharging)
-                    {
-                        _lowBatteryAlertSent = false;
-                    }
-
-                    // Critical battery alert (5%)
-                    if (batteryLevel <= 5 && !isCharging && !_criticalBatteryAlertSent)
-                    {
-                        notifyIcon.ShowBalloonTip(3000, "DualSense Critical Battery", $"Your DualSense controller battery is CRITICALLY LOW at {batteryLevel}%!", ToolTipIcon.Error);
-                        _criticalBatteryAlertSent = true;
-                    }
-                    else if (batteryLevel > 5 || isCharging)
-                    {
-                        _criticalBatteryAlertSent = false;
-                    }
-                }
-            }
-            else
-            {
-                // Read failed - but don't handle disconnect here, Windows events will catch it
-                Log($"timer_Tick: Read FAILED! Status={report.ReadStatus} - waiting for Windows disconnect event");
-            }
+            Log($"timer_Tick: Read FAILED! Status={report.ReadStatus} - waiting for Windows disconnect event");
+            return;
         }
-        else
+
+        _isBluetooth = report.Data.Length == 77; // BT extended report = 77 data bytes; USB = 63
+        int battIdx = _isBluetooth ? 53 : 52;
+
+        if (report.Data.Length <= battIdx)
+            return;
+
+        int battery = report.Data[battIdx];
+        int batteryNibble = battery & 0x0F;
+        bool isCharging = (battery & 0x10) != 0;
+
+        if (batteryNibble > 10)
         {
-            Log($"timer_Tick: Controller not ready (_controller={(_controller == null ? "null" : "not null")}, _controllerWasConnected={_controllerWasConnected})");
+            Log($"timer_Tick: Invalid battery nibble {batteryNibble} (raw=0x{battery:X2}), skipping");
+            return;
         }
-        
-        Log("=== timer_Tick END ===");
+
+        int batteryLevel = batteryNibble * 10;
+        UpdateBatteryLevel(batteryLevel, isCharging);
+
+        if (batteryLevel <= 20 && !isCharging && !_lowBatteryAlertSent)
+        {
+            notifyIcon.ShowBalloonTip(3000, "DualSense Low Battery", $"Your DualSense controller battery is at {batteryLevel}%!", ToolTipIcon.Warning);
+            _lowBatteryAlertSent = true;
+        }
+        else if (batteryLevel > 20 || isCharging)
+        {
+            _lowBatteryAlertSent = false;
+        }
+
+        if (batteryLevel <= 5 && !isCharging && !_criticalBatteryAlertSent)
+        {
+            notifyIcon.ShowBalloonTip(3000, "DualSense Critical Battery", $"Your DualSense controller battery is CRITICALLY LOW at {batteryLevel}%!", ToolTipIcon.Error);
+            _criticalBatteryAlertSent = true;
+        }
+        else if (batteryLevel > 5 || isCharging)
+        {
+            _criticalBatteryAlertSent = false;
+        }
     }
 
     private void UpdateUIForDisconnect()
@@ -513,10 +504,6 @@ public partial class Form1 : Form
         _controller?.CloseDevice();
         _controller = null;
         
-        // Reset ALL tracking variables
-        _failedReadCount = 0;
-        _staleReadCount = 0;
-        _lastTimestamp = 0;
         _isBluetooth = false;
         _lowBatteryAlertSent = false;
         _criticalBatteryAlertSent = false;
@@ -525,8 +512,13 @@ public partial class Form1 : Form
         if (lblStatus != null) lblStatus.Text = "Status: Disconnected";
         if (lblBattery != null) lblBattery.Text = "Battery: N/A";
         if (pbBattery != null) pbBattery.Value = 0;
+        if (_trayIconHandle != IntPtr.Zero)
+        {
+            DestroyIcon(_trayIconHandle);
+            _trayIconHandle = IntPtr.Zero;
+        }
         notifyIcon.Icon = SystemIcons.Application;
-        notifyIcon.Text = "Searching for controller...";
+        notifyIcon.Text = "DualSense Battery - Searching...";
         
         Log("UpdateUIForDisconnect: All state cleared");
     }
@@ -595,15 +587,15 @@ public partial class Form1 : Form
                 graphics.FillPolygon(Brushes.Yellow, points);
             }
 
-            IntPtr hIcon = bitmap.GetHicon();
-            try
-            {
-                notifyIcon.Icon = Icon.FromHandle(hIcon);
-            }
-            finally
-            {
-                DestroyIcon(hIcon);
-            }
+            // Create new icon handle BEFORE destroying the old one, so the tray icon is
+            // never pointing at an invalid handle. Icon.FromHandle does not take ownership
+            // of the handle — we must call DestroyIcon ourselves when we're done with it.
+            IntPtr newHandle = bitmap.GetHicon();
+            IntPtr oldHandle = _trayIconHandle;
+            _trayIconHandle = newHandle;
+            notifyIcon.Icon = Icon.FromHandle(newHandle);
+            if (oldHandle != IntPtr.Zero)
+                DestroyIcon(oldHandle);
         }
     }
 }

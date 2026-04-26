@@ -46,6 +46,7 @@ partial class Form1
             // 
             this.notifyIcon.ContextMenuStrip = this.contextMenuStrip;
             this.notifyIcon.Visible = true;
+            this.notifyIcon.Icon = System.Drawing.SystemIcons.Application;
             // 
             // contextMenuStrip
             // 
@@ -54,6 +55,7 @@ partial class Form1
             this.exitToolStripMenuItem});
             this.contextMenuStrip.Name = "contextMenuStrip";
             this.contextMenuStrip.Size = new System.Drawing.Size(104, 48);
+            this.contextMenuStrip.Enabled = true;
             // 
             // colorToolStripMenuItem
             // 
@@ -83,6 +85,7 @@ partial class Form1
             this.Text = "DualSense Battery";
             this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.Form1_FormClosing);
             this.Load += new System.EventHandler(this.Form1_Load);
+            this.Shown += new System.EventHandler(this.Form1_Shown);
             this.contextMenuStrip.ResumeLayout(false);
             this.ResumeLayout(false);
     }
