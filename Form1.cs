@@ -1,4 +1,7 @@
+using System.Net.Http;
+using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using HidLibrary;
 
 namespace DualSenseBattery.App;
@@ -36,6 +39,69 @@ public partial class Form1 : Form
     {
         string logFile = Path.Combine(Path.GetTempPath(), "DualSenseBattery.log");
         File.AppendAllText(logFile, $"{DateTime.Now:HH:mm:ss.fff} - {message}\n");
+    }
+
+    private static readonly HttpClient _http = new HttpClient();
+
+    private async Task CheckForUpdate()
+    {
+        try
+        {
+            _http.DefaultRequestHeaders.UserAgent.TryParseAdd("DualSenseBattery");
+            string json = await _http.GetStringAsync("https://api.github.com/repos/Eduruiz/dualsense-battery/releases/latest");
+
+            using var doc = JsonDocument.Parse(json);
+            string latestTag = doc.RootElement.GetProperty("tag_name").GetString()?.TrimStart('v') ?? "";
+
+            var current = Assembly.GetExecutingAssembly().GetName().Version;
+            if (current == null || !Version.TryParse(latestTag, out var latest)) return;
+
+            if (latest > current)
+            {
+                Log($"CheckForUpdate: new version available: {latestTag}");
+                ShowUpdateToast(latestTag);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"CheckForUpdate failed: {ex.Message}");
+        }
+    }
+
+    private void ShowUpdateToast(string newVersion)
+    {
+        string url = "https://github.com/Eduruiz/dualsense-battery/releases/latest";
+        string xml = $"""
+            <toast>
+              <visual>
+                <binding template="ToastGeneric">
+                  <text>DualSense Battery - Update Available</text>
+                  <text>Version {System.Security.SecurityElement.Escape(newVersion)} is available.</text>
+                </binding>
+              </visual>
+              <actions>
+                <action content="Download" activationType="protocol" arguments="{url}"/>
+              </actions>
+              <audio silent="true"/>
+            </toast>
+            """;
+
+        try
+        {
+            var xmlDoc = new Windows.Data.Xml.Dom.XmlDocument();
+            xmlDoc.LoadXml(xml);
+
+            var toast = new Windows.UI.Notifications.ToastNotification(xmlDoc);
+            toast.ExpirationTime = DateTimeOffset.Now.AddDays(1);
+
+            Windows.UI.Notifications.ToastNotificationManager
+                .CreateToastNotifier(Program.APP_ID)
+                .Show(toast);
+        }
+        catch (Exception ex)
+        {
+            Log($"ShowUpdateToast failed: {ex.Message}");
+        }
     }
 
     private void ShowToast(string title, string message, bool silent = false, string scenario = "")
@@ -342,6 +408,7 @@ public partial class Form1 : Form
     {
         Log("Form1_Shown: Hiding form");
         this.Hide();
+        _ = CheckForUpdate();
         
         // Check if controller is already connected on startup
         Log("Form1_Shown: Checking for already-connected controller");
